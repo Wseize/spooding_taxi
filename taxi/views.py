@@ -3,10 +3,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import NotFound
-from django.db import transaction
 from math import radians, sin, cos, sqrt, atan2
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+import time
 
 from .models import Taxi, Ride, TaxiRating
 from .serializers import TaxiSerializer, RideSerializer, TaxiRatingSerializer
@@ -57,6 +57,55 @@ class TaxiViewSet(viewsets.ModelViewSet):
         except Taxi.DoesNotExist:
             raise NotFound("Taxi not found.")
 
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def update_location(self, request, pk=None):
+        taxi = self.get_object()
+        # تحقّق إنّ request.user هو السائق صاحب التاكسي
+        if not hasattr(request.user, 'taxi') or request.user.taxi.id != taxi.id:
+            return Response({"error": "Not allowed"}, status=403)
+
+        try:
+            lat = float(request.data.get('lat'))
+            lng = float(request.data.get('lng'))
+        except (TypeError, ValueError):
+            return Response({"error": "lat and lng required"}, status=400)
+
+        taxi.location_lat = lat
+        taxi.location_lng = lng
+        taxi.save()
+
+        channel_layer = get_channel_layer()
+        # broadcast للسائق نفسه
+        async_to_sync(channel_layer.group_send)(
+            f"driver_{taxi.driver.id}",
+            {
+                "type": "driver_location",
+                "message": {
+                    "driver_id": taxi.driver.id,
+                    "lat": lat,
+                    "lng": lng,
+                    "ts": str(taxi.updated_at) if hasattr(taxi, "updated_at") else None
+                }
+            }
+        )
+
+        # لو التاكسي مرتبط برحلة شغّالة نبعث لتلك الرحلة زادة
+        active_ride = taxi.taxi_rides.filter(status__in=['accepted', 'in_progress', 'in_ride']).first()
+        if active_ride:
+            async_to_sync(channel_layer.group_send)(
+                f"ride_{active_ride.id}",
+                {
+                    "type": "ride_event",
+                    "message": {
+                        "action": "location",
+                        "data": {"lat": lat, "lng": lng, "taxi_id": taxi.id}
+                    }
+                }
+            )
+
+        return Response({"status": "ok"})
+
+
     # def get_object(self):
     #     user_id = self.kwargs.get('pk')
     #     try:
@@ -106,6 +155,29 @@ class RideViewSet(viewsets.ModelViewSet):
         a = sin(dlat/2)**2 + cos(lat1_rad)*cos(lat2_rad)*sin(dlon/2)**2
         c = 2 * atan2(sqrt(a), sqrt(1-a))
         return R * c
+
+    # ---------------- Create ride ----------------
+    def perform_create(self, serializer):
+        user = self.request.user
+        start_lat = self.request.data.get("start_lat")
+        start_lng = self.request.data.get("start_lng")
+
+        nearest_taxi = None
+        min_distance = float("inf")
+
+        if start_lat and start_lng:
+            start_lat = float(start_lat)
+            start_lng = float(start_lng)
+
+            # نجيبو كان التاكسيات الـ available
+            for taxi in Taxi.objects.filter(available=True):
+                distance = self.haversine(start_lat, start_lng, taxi.location_lat, taxi.location_lng)
+                if distance < min_distance:
+                    min_distance = distance
+                    nearest_taxi = taxi
+
+        # نعمل save للـ ride مع أقرب taxi
+        serializer.save(passenger=user, taxi=nearest_taxi)
 
     # --- Nearby rides for join ---
     @action(detail=False, methods=['get'], url_path='nearby')
