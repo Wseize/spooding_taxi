@@ -13,10 +13,10 @@ class TaxiSerializer(serializers.ModelSerializer):
     average_rating = serializers.SerializerMethodField()
     ratings_count = serializers.SerializerMethodField()
     completed_rides_count = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Taxi
-        fields = ['id', 'driver', 'license_plate', 'location_lat', 'location_lng', 'available', 'average_rating', 'ratings_count', 'completed_rides_count',]
+        fields = ['id', 'driver', 'image', 'name', 'license_plate', 'location_lat', 'location_lng', 'available', 'average_rating', 'ratings_count', 'completed_rides_count',]
 
     def get_average_rating(self, obj):
         ratings = obj.ratings.all()
@@ -54,7 +54,7 @@ class TaxiSerializer(serializers.ModelSerializer):
         if instance.driver:
             validated_data.pop('driver', None)
         return super().update(instance, validated_data)
-    
+
 
 class TaxiRatingSerializer(serializers.ModelSerializer):
     user = serializers.ReadOnlyField(source="user.id")
