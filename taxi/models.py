@@ -3,14 +3,22 @@ from accounts.models import CustomUser
 
 class Taxi(models.Model):
     driver = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='taxi')
-    license_plate = models.CharField(max_length=15)
+    name = models.CharField(max_length=50, blank=True, null=True)
+    license_plate = models.CharField(max_length=30)
     location_lat = models.FloatField(default=0.0)
     location_lng = models.FloatField(default=0.0)
     available = models.BooleanField(default=True)
 
+    # Nouveau champ image
+    image = models.ImageField(
+        upload_to='taxi_images/',  # dossier où les images seront stockées
+        blank=True,
+        null=True
+    )
+
     def __str__(self):
         return f"Taxi {self.license_plate} - Driver {self.driver.username}"
-    
+
 class TaxiRating(models.Model):
     taxi = models.ForeignKey(Taxi, on_delete=models.CASCADE, related_name="ratings")
     user = models.ForeignKey(CustomUser, on_delete=models.CASCADE, related_name="taxi_ratings")
